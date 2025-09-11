@@ -3,15 +3,17 @@ secular.py
 -----------
 Module for computing secular perturbation matrices (eccentricity and inclination).
 Results are converted to degrees per year (deg/yr), as in Murray & Dermott
-eqs. (7.34) and (7.35).
+eqs. (7.34) and (7.35). Includes diagonalization and matching of eigenvectors
+to the conventions of eq. (7.42).
 """
 
 import numpy as np
 from scipy.integrate import quad
 import math
 
-# Conversion factor
+# Conversion factors
 RAD_TO_DEG = 180.0 / math.pi
+DEG_TO_ARCSEC = 3600.0
 
 
 def laplaceCoefficient(s: float, j: int, alpha: float) -> float:
@@ -78,7 +80,7 @@ def computeMatrixA(planets, constants, toDeg: bool = True) -> np.ndarray:
 def computeMatrixB(planets, constants, toDeg: bool = True) -> np.ndarray:
     """
     Compute secular matrix B (inclination terms).
-    Implements Eqs. (7.9)–(7.12) for B, as in Murray & Dermott.
+    Implements Eqs. (7.9)–(7.12) from Murray & Dermott.
     """
     G = constants["G"]
     M0 = constants["M0"]
@@ -112,26 +114,95 @@ def computeMatrixB(planets, constants, toDeg: bool = True) -> np.ndarray:
 
     return B
 
-def diagonalizeMatrix(M: np.ndarray):
+
+# =========================
+# Diagonalization utilities
+# =========================
+
+def normalizeColumns(V: np.ndarray) -> np.ndarray:
+    """Normalize columns of matrix V to unit Euclidean norm."""
+    Vn = V.copy().astype(float)
+    for j in range(Vn.shape[1]):
+        col = Vn[:, j]
+        norm = np.linalg.norm(col)
+        if norm != 0:
+            Vn[:, j] = col / norm
+    return Vn
+
+
+def orientColumnsToReference(V: np.ndarray, ref: np.ndarray) -> np.ndarray:
     """
-    Diagonalize secular matrix (A or B).
+    Flip sign of each column of V so that dot(V[:,j], ref[:,j]) > 0.
+    """
+    Vout = V.copy()
+    for j in range(ref.shape[1]):
+        d = np.dot(Vout[:, j], ref[:, j])
+        if d < 0:
+            Vout[:, j] = -Vout[:, j]
+    return Vout
+
+
+def diagonalizeAndMatch(M: np.ndarray,
+                        inDeg: bool = True,
+                        toArcsec: bool = True,
+                        referenceVecs: np.ndarray = None,
+                        sortBy: str = "magnitude"):
+    """
+    Diagonalize matrix M and optionally reorder/orient eigenvectors to match
+    reference (e.g. Murray & Dermott eq. 7.42).
 
     Parameters
     ----------
     M : np.ndarray
-        2x2 secular matrix (in deg/yr).
+        2x2 matrix (in deg/yr if inDeg=True).
+    inDeg : bool
+        If True, M is in deg/yr.
+    toArcsec : bool
+        If True, eigenvalues are returned in arcsec/yr.
+    referenceVecs : np.ndarray or None
+        Reference eigenvectors (2x2) to match orientation/order.
+    sortBy : str
+        "magnitude" (default) or "value".
 
     Returns
     -------
-    eigenvalues : np.ndarray
-        Frequencies (deg/yr).
-    eigenvectors : np.ndarray
-        Normalized eigenvectors (modes).
+    eigvals_out : np.ndarray
+        Eigenvalues (arcsec/yr if toArcsec=True, else deg/yr).
+    eigvecs_out : np.ndarray
+        Eigenvectors (normalized, columns).
     """
     eigvals, eigvecs = np.linalg.eig(M)
-    # Ordenar por valor absoluto (opcional, para consistência com o livro)
-    idx = np.argsort(eigvals)
+
+    # Sorting
+    if sortBy == "magnitude":
+        idx = np.argsort(np.abs(eigvals))
+    else:
+        idx = np.argsort(eigvals)
+
     eigvals = eigvals[idx]
     eigvecs = eigvecs[:, idx]
-    return eigvals, eigvecs
 
+    # Normalize columns
+    eigvecs = normalizeColumns(eigvecs)
+
+    # Match to reference if given
+    if referenceVecs is not None:
+        # Normalize reference
+        ref = normalizeColumns(referenceVecs)
+        # Try both permutations (2x2)
+        cost01 = 1 - abs(np.dot(eigvecs[:, 0], ref[:, 0])) + \
+                 1 - abs(np.dot(eigvecs[:, 1], ref[:, 1]))
+        cost10 = 1 - abs(np.dot(eigvecs[:, 1], ref[:, 0])) + \
+                 1 - abs(np.dot(eigvecs[:, 0], ref[:, 1]))
+        if cost10 < cost01:
+            eigvecs = eigvecs[:, [1, 0]]
+            eigvals = eigvals[[1, 0]]
+        eigvecs = orientColumnsToReference(eigvecs, ref)
+
+    # Convert eigenvalues if requested
+    if toArcsec and inDeg:
+        eigvals_out = eigvals * DEG_TO_ARCSEC
+    else:
+        eigvals_out = eigvals
+
+    return eigvals_out, eigvecs
