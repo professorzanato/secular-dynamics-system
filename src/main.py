@@ -3,7 +3,7 @@
 main.py
 -------
 Pipeline completo e genérico (dados em /data/*.json).
-Mostra resultados intermediários no console (com espaçamento e nomes dos planetas)
+Mostra resultados intermediários no console (condições iniciais no começo)
 e gera os arquivos de saída (CSV, NPZ, PNG).
 """
 
@@ -55,13 +55,20 @@ def print_matrix_vectors(matrix, names, title):
         print(f"  {names[i]:<10} {row_str}")
 
 
-def print_initial_conditions(h0, k0, p0, q0, names):
-    """Imprime condições iniciais orbitais em formato legível."""
+def print_initial_conditions(bodies, h0, k0, p0, q0, names):
+    """Imprime condições iniciais orbitais originais e convertidas."""
     print("\n" + "="*80)
     print(" Initial conditions (from inputPlanets.json)")
     print("="*80)
-    for i, name in enumerate(names):
-        print(f"  {name:<10}: h0={h0[i]:.6f}, k0={k0[i]:.6f}, "
+    for i, body in enumerate(bodies):
+        e = body["e"]
+        I = body["I"]
+        omega = body["omega"]
+        Omega = body["Omega"]
+        print(f"\n  {names[i]}:")
+        print(f"    Input elements : e={e:.6f}, I={I:.6f} deg, "
+              f"ω={omega:.6f} deg, Ω={Omega:.6f} deg")
+        print(f"    Converted vars : h0={h0[i]:.6f}, k0={k0[i]:.6f}, "
               f"p0={p0[i]:.6f}, q0={q0[i]:.6f}")
 
 
@@ -73,7 +80,11 @@ def main():
     consts = load_constants("data/constants.json")
     names = [b["name"] for b in bodies]
 
-    # (2) Matrizes A e B
+    # (2) Condições iniciais primeiro
+    h0, k0, p0, q0 = initial_conditions_from_json(bodies)
+    print_initial_conditions(bodies, h0, k0, p0, q0, names)
+
+    # (3) Matrizes A e B
     M: SecularMatrices = build_AB_from_bodies(bodies, consts)
     print("\n" + "="*80)
     print(" Secular matrices (deg/yr)")
@@ -81,7 +92,7 @@ def main():
     print_matrix_with_labels(M.A_degyr, names, "Matrix A (eccentricity terms)")
     print_matrix_with_labels(M.B_degyr, names, "Matrix B (inclination terms)")
 
-    # (3) Autovalores/autovetores
+    # (4) Autovalores/autovetores
     eig = secular_eigendecomp(M)
 
     print("\n" + "="*80)
@@ -96,12 +107,8 @@ def main():
     print_vector_with_labels(eig.s_radyr * ARCSEC_PER_RAD, names, "Frequencies s")
     print_matrix_vectors(np.real(eig.Ss), names, "Eigenvectors Ss")
 
-    # (4) Salvar intermediários (CSV)
+    # (5) Salvar intermediários (CSV)
     save_intermediates(M, eig, out_dir="output")
-
-    # (5) Condições iniciais
-    h0, k0, p0, q0 = initial_conditions_from_json(bodies)
-    print_initial_conditions(h0, k0, p0, q0, names)
 
     # (6) Malha temporal [-1e5, +1e5] anos
     t_years = np.linspace(-1.0e5, 1.0e5, 5000)
